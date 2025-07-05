@@ -478,7 +478,7 @@ export default function Home() {
           plotImage={plotImage}
         />
       );
-      const asPdf = pdf([]);
+      const asPdf = pdf();
       asPdf.updateContainer(doc);
       const blob = await asPdf.toBlob();
       const url = URL.createObjectURL(blob);
