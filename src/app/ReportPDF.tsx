@@ -175,6 +175,7 @@ export interface ReportPDFProps {
     findings: string;
     conclusion: string;
     plotImage?: string;
+    mapImages?: { label: string; url: string }[];
 }
 
 const propertyRows = [
@@ -221,12 +222,15 @@ export const ReportPDF: React.FC<ReportPDFProps> = (props) => (
             {/* Report Information Summary (Property Details) */}
             <Text style={styles.sectionHeader}>Report Information Summary</Text>
             <View style={styles.summaryTable}>
-                {propertyRows.map(row => (
-                    <View style={styles.summaryRow} key={row.key}>
-                        <Text style={styles.summaryLabel}>{row.label}:</Text>
-                        <Text style={styles.summaryValue}>{props[row.key as keyof ReportPDFProps]}</Text>
-                    </View>
-                ))}
+                {propertyRows.map(row => {
+                    const value = props[row.key as keyof ReportPDFProps];
+                    return (
+                        <View style={styles.summaryRow} key={row.key}>
+                            <Text style={styles.summaryLabel}>{row.label}:</Text>
+                            <Text style={styles.summaryValue}>{typeof value === 'string' ? value : ''}</Text>
+                        </View>
+                    );
+                })}
             </View>
             {/* Main Sections */}
             <Text style={styles.sectionHeader}>Introduction</Text>
@@ -236,11 +240,24 @@ export const ReportPDF: React.FC<ReportPDFProps> = (props) => (
             {props.plotImage && (
                 <View wrap={false} style={{ marginBottom: 12 }}>
                     <Text style={styles.sectionHeader}>Plot Visualization</Text>
-                    {/* <Text style={{ fontSize: 16, fontWeight: 'bold', textAlign: 'center', marginTop: 16 }}>Plot Visualization</Text> */}
                     <Image src={props.plotImage} style={{ width: 300, height: 300, alignSelf: 'center', marginVertical: 8, border: '1px solid #888', backgroundColor: '#fff' }} />
                     <Text style={{ fontSize: 10, color: '#666', textAlign: 'center' }}>Area: {props.area}</Text>
                     <Text style={{ fontSize: 10, color: '#666', textAlign: 'center' }}>Muncipality: {props.municipality}</Text>
                     <Text style={{ fontSize: 10, color: '#666', textAlign: 'center', marginTop: 2 }}>Plot boundary visualization extracted from PAL Surveying mapping system</Text>
+                </View>
+            )}
+            {Array.isArray(props.mapImages) && props.mapImages.length > 0 && (
+                <View>
+                    <Text style={{ fontSize: 16, fontWeight: 'bold', textAlign: 'center', marginTop: 16 }}>Map Views</Text>
+                    {props.mapImages.map(img => (
+                        img && img.label && img.url ? (
+                            <View key={img.label} style={{ alignItems: 'center', marginBottom: 16 }}>
+                                <Text style={{ fontSize: 12, fontWeight: 'bold', textAlign: 'center', marginBottom: 4 }}>{String(img.label)}</Text>
+                                <Image src={img.url} style={{ width: 300, height: 200, alignSelf: 'center', marginVertical: 4, border: '1px solid #888', backgroundColor: '#fff' }} />
+                                <Text style={{ fontSize: 10, color: '#666', textAlign: 'center', marginTop: 2 }}>Google Maps Static API view with plot perimeter overlay</Text>
+                            </View>
+                        ) : null
+                    ))}
                 </View>
             )}
             <Text style={styles.sectionHeader}>Findings</Text>

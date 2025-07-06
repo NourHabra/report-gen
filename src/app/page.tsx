@@ -84,6 +84,16 @@ const CONCLUSION_TEMPLATES = [
   () => "It is recommended that the next tranche of the construction loan be released, as the works completed to date are in line with the approved schedule and specifications.",
 ];
 
+const MAPS_STATIC_API_KEY = process.env.NEXT_PUBLIC_MAPS_STATIC_API_KEY || '';
+const MAP_IMAGE_SIZE = '600x400';
+const MAP_IMAGE_ZOOM = 18; // You may adjust this for your use case
+const MAP_IMAGE_TYPES = [
+  { label: 'Satellite View', maptype: 'satellite' },
+  { label: 'Road Map', maptype: 'roadmap' },
+  { label: 'Hybrid View', maptype: 'hybrid' },
+  { label: 'Terrain View', maptype: 'terrain' },
+];
+
 export default function Home() {
   // Multi-stage form state
   const [stage, setStage] = useState(1);
@@ -148,6 +158,10 @@ export default function Home() {
 
   // Add after imagePreviews state
   const [plotPolygon, setPlotPolygon] = useState<[number, number][]>([]);
+
+  // Add state for map images and loading
+  const [mapImages, setMapImages] = useState<{ [label: string]: string }>({});
+  const [mapImagesLoading, setMapImagesLoading] = useState(false);
 
   // Navigation helpers
   const nextStage = () => setStage((s) => Math.min(s + 1, 7));
@@ -229,6 +243,28 @@ export default function Home() {
     return val.replace(/μ/g, 'm');
   }
 
+  // Helper to build Google Maps Static API URL with polyline overlay
+  function buildStaticMapUrl({ coordsArr, maptype }: { coordsArr: [number, number][], maptype: string }) {
+    if (!MAPS_STATIC_API_KEY || !coordsArr.length) return '';
+    // Convert to lat,lng order
+    let latLngArr = coordsArr.map(([lng, lat]) => [lat, lng]);
+    // Ensure polygon is closed
+    if (latLngArr.length > 2) {
+      const [firstLat, firstLng] = latLngArr[0];
+      const [lastLat, lastLng] = latLngArr[latLngArr.length - 1];
+      if (firstLat !== lastLat || firstLng !== lastLng) {
+        latLngArr = [...latLngArr, latLngArr[0]];
+      }
+    }
+    // Build path parameter
+    const path = 'color:0xff0000ff|weight:4|' + latLngArr.map(([lat, lng]) => `${lat},${lng}`).join('|');
+    // Center: use centroid
+    const lats = latLngArr.map(([lat]) => lat);
+    const lngs = latLngArr.map(([, lng]) => lng);
+    const center = `${lats.reduce((a, b) => a + b, 0) / lats.length},${lngs.reduce((a, b) => a + b, 0) / lngs.length}`;
+    return `https://maps.googleapis.com/maps/api/staticmap?size=${MAP_IMAGE_SIZE}&zoom=${MAP_IMAGE_ZOOM}&maptype=${maptype}&center=${center}&path=${encodeURIComponent(path)}&key=${MAPS_STATIC_API_KEY}`;
+  }
+
   // KML parsing and state update
   async function handleKmlFile(file: File) {
     setKmlError("");
@@ -299,15 +335,35 @@ export default function Home() {
         });
         setPlotPolygon(coordsArr);
         console.log("KML Polygon parsed array:", coordsArr);
+        // Fetch Google Maps images for all views using coordsArr
+        setMapImagesLoading(true);
+        Promise.all(
+          MAP_IMAGE_TYPES.map(({ label, maptype }) => {
+            const url = buildStaticMapUrl({ coordsArr, maptype });
+            console.log('MAPS_STATIC_API_KEY:', MAPS_STATIC_API_KEY);
+            console.log(`Google Maps Static API URL for ${label}:`, url);
+            return fetch(url)
+              .then(res => {
+                if (!res.ok) {
+                  console.error('Failed to fetch map image for', label, url, res.status);
+                  return Promise.reject('Failed to fetch map image');
+                }
+                return res.blob();
+              })
+              .then(blob => [label, URL.createObjectURL(blob)] as [string, string])
+              .catch((err) => {
+                console.error('Map image fetch error for', label, err);
+                return [label, ''];
+              });
+          })
+        ).then(results => {
+          setMapImages(Object.fromEntries(results));
+          setMapImagesLoading(false);
+        });
       } catch (err) {
         setPlotPolygon([]);
         console.error("Failed to extract polygon from KML", err);
       }
-      // KML Source
-      // (You can add a state for KML source if needed)
-      // Plot Image: Available (if you want to set a flag)
-      // Coordinates Count
-      // (You can add a state for this if needed)
     } catch {
       setKmlError("Failed to parse KML file. Please upload a valid KML file.");
     }
@@ -448,6 +504,7 @@ export default function Home() {
           console.error('Failed to convert SVG to PNG for PDF', err);
         }
       }
+      const mapImagesForPDF: { label: string; url: string }[] = MAP_IMAGE_TYPES.map(({ label }) => ({ label, url: mapImages[label] })).filter(img => !!img.url);
       const doc = (
         <ReportPDF
           bankName={bankName}
@@ -476,6 +533,7 @@ export default function Home() {
           findings={findings}
           conclusion={conclusion}
           plotImage={plotImage}
+          mapImages={mapImagesForPDF}
         />
       );
       const asPdf = pdf();
@@ -667,10 +725,6 @@ export default function Home() {
             <span className="block text-lg font-semibold mb-2">Upload Images</span>
             <div className="grid grid-cols-1 gap-6">
               {["Plot Diagram", "Satellite View", "Road Map", "Hybrid View", "Terrain View"].map((label) => {
-                if (label === "Plot Diagram") {
-                  console.log("[Render] plotPolygon:", plotPolygon);
-                  console.log("[Render] imagePreviews['Plot Diagram']:", imagePreviews[label]);
-                }
                 return (
                   <div key={label} className="space-y-2">
                     <label className="block font-medium mb-1">{label}</label>
@@ -686,12 +740,7 @@ export default function Home() {
                         type="file"
                         accept="image/*"
                         className="hidden"
-                        onChange={e => {
-                          if (label === "Plot Diagram") {
-                            console.log("Image uploaded for Plot Diagram");
-                          }
-                          handleImageChange(e, label);
-                        }}
+                        onChange={e => handleImageChange(e, label)}
                       />
                       {label === "Plot Diagram" && !imagePreviews[label] && plotPolygon.length > 2 ? (
                         (() => {
@@ -737,13 +786,19 @@ export default function Home() {
                             return <span className="text-red-500">Error rendering plot SVG</span>;
                           }
                         })()
-                      ) : label === "Plot Diagram" && !imagePreviews[label] && plotPolygon.length <= 2 ? (
-                        <span className="text-yellow-500">No plot polygon data available for SVG preview.</span>
+                      ) : label !== "Plot Diagram" && mapImagesLoading ? (
+                        <span className="text-zinc-500 italic mt-2">Loading map image...</span>
+                      ) : label !== "Plot Diagram" && mapImages[label] ? (
+                        <img
+                          src={mapImages[label]}
+                          alt={label + " map preview"}
+                          className="mt-2 rounded shadow max-h-40 object-contain border border-zinc-300 bg-white"
+                        />
                       ) : imagePreviews[label] ? (
                         <img
                           src={imagePreviews[label]}
                           alt={label + " preview"}
-                          className="mt-2 rounded shadow max-h-40 object-contain border border-zinc-700 bg-zinc-900"
+                          className="mt-2 rounded shadow max-h-40 object-contain border border-zinc-300 bg-white"
                         />
                       ) : (
                         <span className="text-zinc-500 italic mt-2">No image selected</span>
@@ -1177,6 +1232,24 @@ export default function Home() {
             ) : (
               <div className="text-center text-yellow-500">No plot polygon data available for SVG preview.</div>
             )}
+          </div>
+          <div>
+            <h3 className="text-xl font-bold mb-2 text-center">Map Views</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {MAP_IMAGE_TYPES.map(({ label }) => (
+                mapImages[label] && (
+                  <div key={label} className="flex flex-col items-center">
+                    <span className="font-medium mb-2 text-zinc-700">{label}</span>
+                    <img
+                      src={mapImages[label]}
+                      alt={label + " map preview"}
+                      className="rounded shadow max-h-60 object-contain border border-zinc-300 bg-white mb-2"
+                      style={{ width: '100%', maxWidth: 400 }}
+                    />
+                  </div>
+                )
+              ))}
+            </div>
           </div>
           <div className="flex justify-between mt-8">
             <button
